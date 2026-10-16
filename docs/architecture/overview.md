@@ -1,64 +1,65 @@
-# Orbit Cache: architecture and boundaries
+# Orbit Cache: architecture and contract
 
-## Responsibility
+## Package boundary
 
-`orbit-cache` is a small, provider-neutral asynchronous cache capability. It defines the API an
-application can depend on without requiring a cache server or vendor SDK. The separate
-`orbit-cache-redis` package adapts Redis to this contract; installing Orbit Core does not install either
-package. The distribution requires Python 3.11 through 3.14 and is currently pre-alpha.
+`orbit-cache` defines the provider-neutral asynchronous `AsyncCache` protocol and shared error
+types. It has no runtime dependencies and does not connect to a cache server. Provider packages own
+SDKs, credentials, transport, pooling, timeout settings, and backend failures.
 
-## Declared dependencies
-
-The following dependency declarations come from the checked-in manifests. Optional groups and development dependencies are called out separately.
-
-### `pyproject.toml`
-- No dependencies declared.
-- Optional `dev` group: `pytest>=8,<10`, `pytest-asyncio>=0.24,<2`, `ruff>=0.8,<1`, `mypy>=1.13,<2`.
-
-Declared dependencies do not mean that optional providers or services are bundled with this package.
-
-## Implementation layout
-
-Representative implementation files in this checkout:
-
-- `src/orbit_cache/__init__.py`
-- `src/orbit_cache/contracts.py`
-- `src/orbit_cache/errors.py`
-
-## Public contract and scope
-
-## Contract
-
-Install the capability only when an application or adapter needs its shared API:
-
-```bash
-python -m pip install orbit-cache
+```text
+application code ───── AsyncCache ───── orbit-cache (contract and errors)
+                          ▲
+                          │ implementation
+                   orbit-cache-redis ─── redis-py ─── Redis
 ```
 
-`AsyncCache` defines `get`, `set`, `delete`, and `aclose`. Keys are non-empty strings and values
-are bytes. A missing key returns `None`; `delete` reports whether the key existed. A TTL is either
-omitted or a positive integer number of seconds. The contract intentionally does not define
-serialization, cache-aside behavior, eviction, consistency, or distributed locking.
+Core can use `CACHE_DEPENDENCY_KEY` (`"orbit.cache"`) to make an application-scoped implementation
+available through its container. Core does not install or choose a provider. The application or
+provider plugin that creates the cache owns its lifecycle and calls `aclose()` during shutdown.
 
-Application code can depend on the protocol instead of a provider implementation:
+## Data and expiry semantics
 
-```python
-from orbit_cache import AsyncCache
+Keys are non-empty strings and values are bytes. A missing or expired key returns `None`. `set`
+replaces the existing value. `ttl=None` requests no expiration; a positive whole-second TTL
+requests expiration after that duration, but normal cache eviction may remove the entry earlier.
+`delete` returns whether the entry existed when deletion was applied.
 
+Serialization is deliberately outside this package. Applications should encode structured data
+with an explicit, versioned format and handle decode failures at their own boundary. Never treat a
+cache as the durable source of truth for application data.
 
-async def load_profile(cache: AsyncCache, user_id: str) -> bytes | None:
-    return await cache.get(f"profile:{user_id}")
-```
+## Guarantees and non-guarantees
 
-Resolve an application-registered implementation with `CACHE_DEPENDENCY_KEY` when using Orbit's
-container. The application or adapter that creates a cache owns its lifetime and must call
-`aclose()` during shutdown; a provider plugin can register and close that resource for the app.
+The shared interface is one-key CRUD only. It does not provide compare-and-set, atomic multi-key
+transactions, key scans, eviction controls, cache-aside or write-through behavior, consistent
+replicas, distributed locks, or durable persistence. Do not infer ordering, request coalescing, or
+cross-instance coherence. Use a capability that explicitly defines those semantics when an
+application depends on them.
 
-Implementations should raise `CacheConfigurationError` for invalid arguments and
-`CacheOperationError` for backend failures. Do not expose provider exceptions or credentials through
-these errors, and allow task cancellation to propagate unchanged. `orbit-cache-redis` is one optional
-adapter; it is not installed as a dependency of this capability package.
+Maximum key/value sizes, TTL ceilings, expiration precision, eviction, consistency, and connection
+pool behavior are provider-specific. Adapters must document their bounds; applications should
+choose limits suitable for their data and workload.
 
-## Boundary rules
+## Errors and cancellation
 
-Keep provider SDKs, credentials, transports, and provider-specific error translation in provider adapters. Keep reusable capability contracts in the matching capability package and lifecycle orchestration in Core. Apply the relevant layer for this repository and preserve the dependency direction shown above.
+Invalid input should raise `CacheConfigurationError`. Backend failures, calls against a closed
+instance, and shutdown failures should use `CacheOperationError`. Provider credentials and raw
+backend messages must not appear in the public error message. Task cancellation propagates as
+`asyncio.CancelledError` rather than being rewritten as an ordinary cache failure.
+
+## Lifecycle
+
+An implementation owns only the resources documented by that adapter. Successful `aclose()` calls
+should be safe to repeat. Adapters should reject new operations after shutdown begins and document
+whether close drains in-flight operations, how cancellation interacts with cleanup, and how a
+failed close is surfaced. Register one application-scoped resource with Core instead of managing
+duplicate cache clients from independent lifecycle hooks.
+
+## Source layout and status
+
+- `src/orbit_cache/contracts.py`: public protocol and dependency registration key.
+- `src/orbit_cache/errors.py`: shared cache exception hierarchy.
+- `src/orbit_cache/__init__.py`: supported package exports.
+
+The distribution is in alpha and declares Python `>=3.11,<3.15`. Its API may change before a
+stable release. See `pyproject.toml` for authoritative version and dependency metadata.

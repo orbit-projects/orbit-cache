@@ -13,12 +13,40 @@
 # limitations under the License.
 """Sanity checks for the public capability's type and error boundaries."""
 
-from orbit_cache import AsyncCache, CacheConfigurationError, CacheError, CacheOperationError
+from orbit_cache import (
+    CACHE_DEPENDENCY_KEY,
+    AsyncCache,
+    CacheConfigurationError,
+    CacheError,
+    CacheOperationError,
+)
+
+
+class _StructuralCache:
+    """Minimal object showing that adapters need not inherit a framework implementation."""
+
+    async def get(self, key: str) -> bytes | None:
+        raise NotImplementedError
+
+    async def set(self, key: str, value: bytes, *, ttl: int | None = None) -> None:
+        raise NotImplementedError
+
+    async def delete(self, key: str) -> bool:
+        raise NotImplementedError
+
+    async def aclose(self) -> None:
+        raise NotImplementedError
 
 
 def test_cache_contract_is_runtime_checkable() -> None:
     """Adapters can be structurally checked without inheriting a framework base class."""
     assert getattr(AsyncCache, "_is_runtime_protocol", False)
+    assert isinstance(_StructuralCache(), AsyncCache)
+
+
+def test_dependency_key_is_public_and_stable() -> None:
+    """Core containers and adapters share the documented cache registration key."""
+    assert CACHE_DEPENDENCY_KEY == "orbit.cache"
 
 
 def test_errors_share_stable_base_type() -> None:

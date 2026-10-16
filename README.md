@@ -3,7 +3,7 @@
 `orbit-cache` is a small, provider-neutral asynchronous cache capability. It defines the API an
 application can depend on without requiring a cache server or vendor SDK. The separate
 `orbit-cache-redis` package adapts Redis to this contract; installing Orbit Core does not install either
-package. The distribution requires Python 3.11 through 3.14 and is currently pre-alpha.
+package. The distribution requires Python 3.11 through 3.14 and is currently alpha.
 
 ## Contract
 
